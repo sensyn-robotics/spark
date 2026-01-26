@@ -66,13 +66,13 @@ jobs:
         with:
           script: |
             const prNumber = context.issue.number;
-            const stagingUrl = `https://nice-meadow-018297c00-${prNumber}.westus2.6.azurestaticapps.net/`;
+            const stagingUrl = `https://nice-meadow-018297c00-${prNumber}.eastasia.6.azurestaticapps.net/`;
 
             github.rest.issues.createComment({
               issue_number: prNumber,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🚀 Azure Static Web Apps Preview Deployed!\n\n✅ Your changes have been deployed to a staging environment.\n\n**Preview URL:** ${stagingUrl}\n\n**Test the Distance Measurement example:**\n${stagingUrl}examples/distance-rescale/\n\n_This staging environment will be automatically deleted when the PR is closed._`
+              body: `## 🚀 Spark Preview Deployed!\n\n✅ Your changes are live on Azure staging environment.\n\n**🔗 Preview URL:** ${stagingUrl}\n\n**📐 Test Distance Measurement example:**\n${stagingUrl}examples/distance-rescale/\n\n**✨ New Features in This PR:**\n- Infinite rotation (no angle limits)\n- Load PLY button moved to lil-gui\n- Drag & drop file loading\n- Toggle coordinate axes\n- Double-click to set origin\n\n_💡 Tip: Clear your browser cache if you see old content._\n\n_This staging environment will be automatically deleted when the PR is closed._`
             });
 
   close_pull_request_job:
