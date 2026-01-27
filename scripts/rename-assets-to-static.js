@@ -1,6 +1,8 @@
 import { execSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -10,6 +12,32 @@ import {
 import { extname, join } from "node:path";
 
 const siteDirectory = "site";
+
+function copyDir(src, dest) {
+  if (!existsSync(dest)) {
+    mkdirSync(dest, { recursive: true });
+  }
+  for (const entry of readdirSync(src, { withFileTypes: true })) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDir(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+// Copy non-markdown directories from docs/ into site/ (mkdocs only processes .md files)
+for (const dir of ["examples", "dist", "viewer"]) {
+  const src = join("docs", dir);
+  const dest = join(siteDirectory, dir);
+  if (existsSync(src)) {
+    copyDir(src, dest);
+    console.log(`Copied ${src} → ${dest}`);
+  }
+}
+
 const oldAssets = join(siteDirectory, "assets");
 const newAssets = join(siteDirectory, "static");
 
