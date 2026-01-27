@@ -68,7 +68,7 @@ jobs:
         with:
           script: |
             const prNumber = context.issue.number;
-            const stagingUrl = `https://nice-meadow-018297c00-${prNumber}.eastasia.6.azurestaticapps.net/`;
+            const stagingUrl = `https://nice-meadow-018297c00-${prNumber}.6.azurestaticapps.net/`;
 
             github.rest.issues.createComment({
               issue_number: prNumber,
