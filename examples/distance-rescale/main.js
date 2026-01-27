@@ -1,7 +1,7 @@
 import { PlyWriter, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 import { GUI } from "lil-gui";
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TrackballControls } from "three/addons/controls/TrackballControls.js";
 import { getAssetFileURL } from "/examples/js/get-asset-url.js";
 
 // ============================================================================
@@ -22,10 +22,14 @@ document.body.appendChild(renderer.domElement);
 const spark = new SparkRenderer({ renderer });
 scene.add(spark);
 
-// Camera controls - using OrbitControls for reliability
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.05;
+// Camera controls - using TrackballControls for infinite rotation
+const controls = new TrackballControls(camera, renderer.domElement);
+controls.rotateSpeed = 1.5;
+controls.zoomSpeed = 0.8; // Reduced from 1.2 for smoother zoom
+controls.panSpeed = 0.8;
+controls.staticMoving = true; // Disable smooth damping for better performance
+controls.minDistance = 0.5; // Prevent zooming too close (causes slowness)
+controls.maxDistance = 50; // Prevent zooming too far
 camera.position.set(0, 2, 5);
 camera.lookAt(0, 0, 0);
 
@@ -34,6 +38,7 @@ function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  controls.handleResize();
 }
 
 // ============================================================================
@@ -62,6 +67,10 @@ const state = {
   // Interaction
   mode: "select1", // 'select1' | 'select2' | 'complete'
   dragging: null, // 'point1' | 'point2' | null
+
+  // Coordinate axes
+  axesHelper: null,
+  axesVisible: false,
 };
 
 let splatMesh = null;
@@ -218,7 +227,7 @@ function selectPoint1(hitPoint) {
   scene.add(state.rayLine1);
 
   state.mode = "select2";
-  updateInstructions("Click on the model to select second measurement point");
+  updateInstructions("Left-click to select second measurement point");
 }
 
 function selectPoint2(hitPoint) {
@@ -250,7 +259,9 @@ function selectPoint2(hitPoint) {
 
   state.mode = "complete";
   calculateDistance();
-  updateInstructions("Drag markers to adjust position along ray lines");
+  updateInstructions(
+    "Drag markers to adjust | Right double-click to set origin",
+  );
 }
 
 // ============================================================================
@@ -371,6 +382,42 @@ function rescaleModel(newDistance) {
 }
 
 // ============================================================================
+// Coordinate Origin Transform
+// ============================================================================
+
+function transformOriginTo(newOrigin) {
+  if (!splatMesh) return;
+
+  // Calculate translation: move newOrigin to (0,0,0)
+  const translation = newOrigin.clone().negate();
+
+  // Transform all splat centers
+  splatMesh.packedSplats.forEachSplat(
+    (i, center, scales, quat, opacity, color) => {
+      center.add(translation);
+      splatMesh.packedSplats.setSplat(i, center, scales, quat, opacity, color);
+    },
+  );
+  splatMesh.packedSplats.needsUpdate = true;
+
+  // Axes helper stays at (0,0,0) to mark the new origin
+  // No need to move it - it already represents world origin
+
+  // Reset measurements (user preference)
+  resetSelection();
+
+  // Transform camera to maintain view
+  camera.position.add(translation);
+
+  // TrackballControls don't have a target, just update
+  controls.update();
+
+  updateInstructions(
+    "Origin set! Left-click to measure | Right double-click for new origin",
+  );
+}
+
+// ============================================================================
 // Reset
 // ============================================================================
 
@@ -418,7 +465,9 @@ function resetSelection() {
   // Update UI
   document.getElementById("distance-display").style.display = "none";
   guiParams.measuredDistance = "0.0000";
-  updateInstructions("Click on the model to select first measurement point");
+  updateInstructions(
+    "Left-click to measure distance | Right double-click to set origin",
+  );
 }
 
 // ============================================================================
@@ -501,6 +550,9 @@ renderer.domElement.addEventListener("pointerup", (event) => {
     return;
   }
 
+  // Only handle left clicks for measurement points
+  if (event.button !== 0) return;
+
   // Check if it was a click (not a drag)
   if (pointerDownPos) {
     const dx = event.clientX - pointerDownPos.x;
@@ -527,6 +579,127 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   pointerDownPos = null;
 });
 
+// Right double-click detection using manual timing
+let lastRightClickTime = 0;
+let lastRightClickPos = null;
+const RIGHT_DOUBLE_CLICK_DELAY = 300; // milliseconds
+
+// Track right mouse down position to detect drags
+let rightPointerDownPos = null;
+
+renderer.domElement.addEventListener(
+  "mousedown",
+  (event) => {
+    if (event.button !== 2) return; // Only right button
+    rightPointerDownPos = { x: event.clientX, y: event.clientY };
+  },
+  { capture: true },
+);
+
+renderer.domElement.addEventListener(
+  "mouseup",
+  (event) => {
+    if (event.button !== 2) return; // Only right button
+
+    // Check if it was a click (not a drag)
+    if (rightPointerDownPos) {
+      const dx = event.clientX - rightPointerDownPos.x;
+      const dy = event.clientY - rightPointerDownPos.y;
+      const dragDistance = Math.sqrt(dx * dx + dy * dy);
+      if (dragDistance > 5) {
+        rightPointerDownPos = null;
+        return; // Was a drag, not a click
+      }
+    }
+
+    const now = Date.now();
+    const currentPos = { x: event.clientX, y: event.clientY };
+
+    // Check if this is a double-click (same position, within time limit)
+    if (lastRightClickPos) {
+      const dx = currentPos.x - lastRightClickPos.x;
+      const dy = currentPos.y - lastRightClickPos.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const timeSinceLastClick = now - lastRightClickTime;
+
+      if (timeSinceLastClick < RIGHT_DOUBLE_CLICK_DELAY && distance < 10) {
+        // Right double-click detected!
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!splatMesh) {
+          console.warn("No model loaded");
+          return;
+        }
+
+        const ndc = getMouseNDC(event);
+        const hitPoint = getHitPoint(ndc);
+
+        if (!hitPoint) {
+          lastRightClickTime = 0;
+          lastRightClickPos = null;
+          rightPointerDownPos = null;
+          return;
+        }
+
+        transformOriginTo(hitPoint);
+        lastRightClickTime = 0;
+        lastRightClickPos = null;
+        rightPointerDownPos = null;
+        return;
+      }
+    }
+
+    lastRightClickTime = now;
+    lastRightClickPos = currentPos;
+    rightPointerDownPos = null;
+  },
+  { capture: true },
+);
+
+// Prevent context menu on right-click
+renderer.domElement.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
+// Drag and drop handlers
+const onDragover = (e) => {
+  e.preventDefault();
+  // Add visual feedback
+  renderer.domElement.style.outline = "3px solid #00ff00";
+};
+
+const onDragLeave = (e) => {
+  e.preventDefault();
+  if (e.target !== renderer.domElement) return;
+  renderer.domElement.style.outline = "none";
+};
+
+const onDrop = (e) => {
+  e.preventDefault();
+  renderer.domElement.style.outline = "none";
+
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    const file = files[0];
+    const validExtensions = [".ply", ".spz", ".splat"];
+    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+    if (!validExtensions.includes(ext)) {
+      console.warn(
+        `Unsupported file type: ${ext}. Expected: ${validExtensions.join(", ")}`,
+      );
+      return;
+    }
+    loadSplatFile(file);
+  } else {
+    console.warn("No files dropped");
+  }
+};
+
+renderer.domElement.addEventListener("dragover", onDragover);
+renderer.domElement.addEventListener("dragleave", onDragLeave);
+renderer.domElement.addEventListener("drop", onDrop);
+
 // ============================================================================
 // GUI
 // ============================================================================
@@ -535,11 +708,21 @@ const gui = new GUI();
 const guiParams = {
   measuredDistance: "0.0000",
   newDistance: 1.0,
+  loadPlyFile: () => {
+    // Trigger file input click
+    document.getElementById("file-input").click();
+  },
+  toggleAxes: () => toggleAxes(),
   reset: resetSelection,
   rescale: () => rescaleModel(guiParams.newDistance),
   exportPly: exportPly,
 };
 
+// Add load button at the top
+gui.add(guiParams, "loadPlyFile").name("Load PLY File");
+gui.add(guiParams, "toggleAxes").name("Toggle Axes");
+
+// Measurement controls
 gui
   .add(guiParams, "measuredDistance")
   .name("Measured Distance")
@@ -577,8 +760,7 @@ async function loadSplatFile(urlOrFile) {
       splatMesh = new SplatMesh({ fileBytes: new Uint8Array(arrayBuffer) });
     }
 
-    // Apply rotation to match common PLY orientation
-    splatMesh.rotation.x = Math.PI;
+    // No fixed rotation applied - users can rotate freely with OrbitControls
     scene.add(splatMesh);
 
     await splatMesh.initialized;
@@ -586,7 +768,13 @@ async function loadSplatFile(urlOrFile) {
 
     // Auto-center camera on the model
     centerCameraOnModel();
-    updateInstructions("Click on the model to select first measurement point");
+
+    // Create or update coordinate axes
+    createOrUpdateAxes();
+
+    updateInstructions(
+      "Left-click to measure distance | Right double-click to set origin",
+    );
   } catch (error) {
     console.error("Error loading splat:", error);
     updateInstructions("Error loading model. Check console for details.");
@@ -643,8 +831,7 @@ function centerCameraOnModel() {
     camera.far = cameraDistance * 10;
     camera.updateProjectionMatrix();
 
-    // Update OrbitControls target
-    controls.target.copy(center);
+    // Update TrackballControls
     controls.update();
 
     console.log(
@@ -657,6 +844,45 @@ function centerCameraOnModel() {
   } catch (error) {
     console.error("Error computing bounding box:", error);
   }
+}
+
+function createOrUpdateAxes() {
+  if (!splatMesh) return;
+
+  // Remove existing axes
+  if (state.axesHelper) {
+    disposeObject(state.axesHelper);
+  }
+
+  // Get model bounding box to size axes appropriately
+  const bbox = splatMesh.getBoundingBox(true);
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+
+  // Create axes helper (1.5x model size)
+  state.axesHelper = new THREE.AxesHelper(maxDim * 1.5);
+  state.axesHelper.visible = state.axesVisible;
+  scene.add(state.axesHelper);
+}
+
+function toggleAxes() {
+  if (!splatMesh) {
+    console.warn("No model loaded");
+    return;
+  }
+
+  state.axesVisible = !state.axesVisible;
+
+  if (!state.axesHelper) {
+    createOrUpdateAxes();
+  } else {
+    state.axesHelper.visible = state.axesVisible;
+  }
+
+  // Update instructions to show state
+  const stateText = state.axesVisible ? "shown" : "hidden";
+  console.log(`Axes ${stateText}`);
 }
 
 // File input handler

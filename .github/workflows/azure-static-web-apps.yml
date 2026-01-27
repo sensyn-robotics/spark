@@ -5,7 +5,16 @@ on:
   push:
     branches:
       - main
-      - feature/azure_hosting
+    paths:
+      - 'src/**'
+      - 'examples/**'
+      - 'docs/**'
+      - 'index.html'
+      - 'examples.html'
+      - 'package.json'
+      - '.github/workflows/azure-static-web-apps.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
     paths:
       - 'src/**'
       - 'examples/**'
@@ -40,6 +49,7 @@ jobs:
         run: npm run site:build
 
       - name: Deploy to Azure Static Web Apps
+        id: deploy
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_NICE_MEADOW_018297C00 }}
@@ -49,3 +59,29 @@ jobs:
           skip_api_build: true
           app_location: "site"
           output_location: ""
+
+      - name: Comment PR with staging URL
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.issue.number;
+            const stagingUrl = `https://nice-meadow-018297c00-${prNumber}.eastasia.6.azurestaticapps.net/`;
+
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🚀 Spark Preview Deployed!\n\n✅ Your changes are live on Azure staging environment.\n\n**🔗 Preview URL:** ${stagingUrl}\n\n**📐 Test Distance Measurement example:**\n${stagingUrl}examples/distance-rescale/\n\n**✨ New Features in This PR:**\n- Infinite rotation (no angle limits)\n- Load PLY button moved to lil-gui\n- Drag & drop file loading\n- Toggle coordinate axes\n- Double-click to set origin\n\n_💡 Tip: Clear your browser cache if you see old content._\n\n_This staging environment will be automatically deleted when the PR is closed._`
+            });
+
+  close_pull_request_job:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    name: Close Pull Request
+    steps:
+      - name: Close Azure Static Web Apps staging environment
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_NICE_MEADOW_018297C00 }}
+          action: "close"
