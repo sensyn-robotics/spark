@@ -1,8 +1,9 @@
 import { PlyWriter, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 import { GUI } from "lil-gui";
 import * as THREE from "three";
-import { TrackballControls } from "three/addons/controls/TrackballControls.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { getAssetFileURL } from "/examples/js/get-asset-url.js";
+import { setupInfiniteRotation } from "/examples/js/orbit-controls-utils.js";
 
 // ============================================================================
 // Scene Setup
@@ -22,14 +23,12 @@ document.body.appendChild(renderer.domElement);
 const spark = new SparkRenderer({ renderer });
 scene.add(spark);
 
-// Camera controls - using TrackballControls for infinite rotation
-const controls = new TrackballControls(camera, renderer.domElement);
-controls.rotateSpeed = 1.5;
-controls.zoomSpeed = 0.8; // Reduced from 1.2 for smoother zoom
-controls.panSpeed = 0.8;
-controls.staticMoving = true; // Disable smooth damping for better performance
-controls.minDistance = 0.5; // Prevent zooming too close (causes slowness)
-controls.maxDistance = 50; // Prevent zooming too far
+// Camera controls - using OrbitControls for globe-style rotation (no camera roll)
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+controls.target.set(0, 0, 0);
+setupInfiniteRotation(controls);
 camera.position.set(0, 2, 5);
 camera.lookAt(0, 0, 0);
 
@@ -38,7 +37,6 @@ function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  controls.handleResize();
 }
 
 // ============================================================================
@@ -75,6 +73,7 @@ const state = {
 
 let splatMesh = null;
 const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 0.1;
 
 // ============================================================================
 // Visual Elements
@@ -227,6 +226,8 @@ function selectPoint1(hitPoint) {
   scene.add(state.rayLine1);
 
   state.mode = "select2";
+  document.getElementById("distance-display").style.display = "block";
+  updateCoordinateDisplay();
   updateInstructions("Left-click to select second measurement point");
 }
 
@@ -330,11 +331,23 @@ function calculateDistance() {
   guiParams.measuredDistance = state.currentDistance.toFixed(4);
 }
 
+function formatCoord(point, label) {
+  return `${label}: (${point.x.toFixed(4)}, ${point.y.toFixed(4)}, ${point.z.toFixed(4)})`;
+}
+
+function updateCoordinateDisplay() {
+  const el1 = document.getElementById("point1-coords");
+  const el2 = document.getElementById("point2-coords");
+  el1.textContent = state.point1 ? formatCoord(state.point1, "P1") : "";
+  el2.textContent = state.point2 ? formatCoord(state.point2, "P2") : "";
+}
+
 function updateDistanceDisplay(distance) {
   const display = document.getElementById("distance-display");
   const value = document.getElementById("distance-value");
   display.style.display = "block";
   value.textContent = distance.toFixed(4);
+  updateCoordinateDisplay();
 }
 
 // ============================================================================
@@ -376,6 +389,13 @@ function rescaleModel(newDistance) {
   }
 
   updateDistanceLine();
+
+  // Scale camera position and controls target
+  camera.position.multiplyScalar(scaleFactor);
+  controls.target.multiplyScalar(scaleFactor);
+  controls.minDistance *= scaleFactor;
+  controls.maxDistance *= scaleFactor;
+
   state.currentDistance = newDistance;
   updateDistanceDisplay(newDistance);
   guiParams.measuredDistance = newDistance.toFixed(4);
@@ -406,10 +426,9 @@ function transformOriginTo(newOrigin) {
   // Reset measurements (user preference)
   resetSelection();
 
-  // Transform camera to maintain view
+  // Transform camera and controls target to maintain view
   camera.position.add(translation);
-
-  // TrackballControls don't have a target, just update
+  controls.target.add(translation);
   controls.update();
 
   updateInstructions(
@@ -499,6 +518,12 @@ function updateInstructions(text) {
 let pointerDownPos = null;
 
 renderer.domElement.addEventListener("pointerdown", (event) => {
+  // Clear any stale dragging state
+  if (state.dragging) {
+    state.dragging = null;
+    controls.enabled = true;
+  }
+
   pointerDownPos = { x: event.clientX, y: event.clientY };
 
   const ndc = getMouseNDC(event);
@@ -541,14 +566,16 @@ renderer.domElement.addEventListener("pointermove", (event) => {
 
   updateDistanceLine();
   calculateDistance();
+  updateCoordinateDisplay();
 });
 
 renderer.domElement.addEventListener("pointerup", (event) => {
-  if (state.dragging) {
-    state.dragging = null;
-    controls.enabled = true;
-    return;
-  }
+  // Always restore controls — prevents stuck state
+  const wasDragging = state.dragging;
+  state.dragging = null;
+  controls.enabled = true;
+
+  if (wasDragging) return;
 
   // Only handle left clicks for measurement points
   if (event.button !== 0) return;
@@ -578,6 +605,16 @@ renderer.domElement.addEventListener("pointerup", (event) => {
 
   pointerDownPos = null;
 });
+
+// Failsafe: clear dragging state if pointer leaves or is cancelled
+for (const eventName of ["pointercancel", "pointerleave"]) {
+  renderer.domElement.addEventListener(eventName, () => {
+    if (state.dragging) {
+      state.dragging = null;
+      controls.enabled = true;
+    }
+  });
+}
 
 // Right double-click detection using manual timing
 let lastRightClickTime = 0;
@@ -827,12 +864,16 @@ function centerCameraOnModel() {
 
     camera.position.set(center.x, center.y, center.z + cameraDistance);
     camera.lookAt(center);
-    camera.near = cameraDistance * 0.001;
-    camera.far = cameraDistance * 10;
     camera.updateProjectionMatrix();
 
-    // Update TrackballControls
+    // Update OrbitControls target and distance limits
+    controls.target.copy(center);
+    controls.minDistance = maxDim * 0.01;
+    controls.maxDistance = maxDim * 10;
     controls.update();
+
+    // Update raycaster threshold based on model size
+    raycaster.params.Points.threshold = maxDim * 0.005;
 
     console.log(
       "Camera position:",
@@ -840,7 +881,6 @@ function centerCameraOnModel() {
       camera.position.y.toFixed(2),
       camera.position.z.toFixed(2),
     );
-    console.log("Camera far:", camera.far);
   } catch (error) {
     console.error("Error computing bounding box:", error);
   }
@@ -934,6 +974,12 @@ function updateMarkerScale(marker) {
 
 renderer.setAnimationLoop(() => {
   controls.update();
+
+  // Dynamic near/far based on camera-to-target distance
+  const dist = camera.position.distanceTo(controls.target);
+  camera.near = dist * 0.001;
+  camera.far = dist * 100;
+  camera.updateProjectionMatrix();
 
   // Update marker scales to maintain constant screen size
   updateMarkerScale(state.marker1);

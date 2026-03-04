@@ -53,6 +53,12 @@
       font-size: 24px;
       font-weight: bold;
     }
+
+    #distance-display .coords {
+      font-size: 12px;
+      font-family: monospace;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 
@@ -63,6 +69,8 @@
   <input type="file" id="file-input" accept=".ply,.spz,.splat" style="display: none;">
 
   <div id="distance-display">
+    <div id="point1-coords" class="coords" style="color: #00ff00;"></div>
+    <div id="point2-coords" class="coords" style="color: #0088ff;"></div>
     <div class="label">Distance</div>
     <div class="value" id="distance-value">0.000</div>
   </div>
