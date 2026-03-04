@@ -12,7 +12,7 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
   60,
   window.innerWidth / window.innerHeight,
-  0.1,
+  0.01,
   100000,
 );
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -964,12 +964,6 @@ function updateMarkerScale(marker) {
 
 renderer.setAnimationLoop(() => {
   controls.update();
-
-  // Dynamic near/far based on camera-to-target distance
-  const dist = camera.position.distanceTo(controls.target);
-  camera.near = dist * 0.001;
-  camera.far = dist * 100;
-  camera.updateProjectionMatrix();
 
   // Update marker scales to maintain constant screen size
   updateMarkerScale(state.marker1);
