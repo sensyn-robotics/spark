@@ -1,9 +1,8 @@
 import { PlyWriter, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
 import { GUI } from "lil-gui";
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TrackballControls } from "three/addons/controls/TrackballControls.js";
 import { getAssetFileURL } from "/examples/js/get-asset-url.js";
-import { setupInfiniteRotation } from "/examples/js/orbit-controls-utils.js";
 
 // ============================================================================
 // Scene Setup
@@ -23,12 +22,13 @@ document.body.appendChild(renderer.domElement);
 const spark = new SparkRenderer({ renderer });
 scene.add(spark);
 
-// Camera controls - using OrbitControls for globe-style rotation (no camera roll)
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.1;
+// Camera controls - TrackballControls for infinite rotation in all directions
+const controls = new TrackballControls(camera, renderer.domElement);
+controls.rotateSpeed = 1.5;
+controls.zoomSpeed = 0.8;
+controls.panSpeed = 0.8;
+controls.dynamicDampingFactor = 0.1;
 controls.target.set(0, 0, 0);
-setupInfiniteRotation(controls);
 camera.position.set(0, 2, 5);
 camera.lookAt(0, 0, 0);
 
@@ -37,6 +37,7 @@ function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  controls.handleResize();
 }
 
 // ============================================================================
