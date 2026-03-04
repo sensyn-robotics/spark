@@ -750,7 +750,8 @@ const guiParams = {
     // Trigger file input click
     document.getElementById("file-input").click();
   },
-  toggleAxes: () => toggleAxes(),
+  showAxes: false,
+  axesLength: 1,
   reset: resetSelection,
   rescale: () => rescaleModel(guiParams.newDistance),
   exportPly: exportPly,
@@ -758,7 +759,23 @@ const guiParams = {
 
 // Add load button at the top
 gui.add(guiParams, "loadPlyFile").name("Load PLY File");
-gui.add(guiParams, "toggleAxes").name("Toggle Axes");
+gui
+  .add(guiParams, "showAxes")
+  .name("Show Axes")
+  .onChange((val) => {
+    state.axesVisible = val;
+    if (val) {
+      createOrUpdateAxes();
+    } else if (state.axesHelper) {
+      state.axesHelper.visible = false;
+    }
+  });
+gui
+  .add(guiParams, "axesLength", 0.01)
+  .name("Axes Length [m]")
+  .onChange(() => {
+    if (state.axesVisible) createOrUpdateAxes();
+  });
 
 // Measurement controls
 gui
@@ -807,8 +824,8 @@ async function loadSplatFile(urlOrFile) {
     // Auto-center camera on the model
     centerCameraOnModel();
 
-    // Create or update coordinate axes
-    createOrUpdateAxes();
+    // Update axes if visible
+    if (state.axesVisible) createOrUpdateAxes();
 
     updateInstructions(
       "Left-click to measure distance | Right double-click to set origin",
@@ -888,42 +905,14 @@ function centerCameraOnModel() {
 }
 
 function createOrUpdateAxes() {
-  if (!splatMesh) return;
-
   // Remove existing axes
   if (state.axesHelper) {
     disposeObject(state.axesHelper);
   }
 
-  // Get model bounding box to size axes appropriately
-  const bbox = splatMesh.getBoundingBox(true);
-  const size = new THREE.Vector3();
-  bbox.getSize(size);
-  const maxDim = Math.max(size.x, size.y, size.z);
-
-  // Create axes helper (1.5x model size)
-  state.axesHelper = new THREE.AxesHelper(maxDim * 1.5);
+  state.axesHelper = new THREE.AxesHelper(guiParams.axesLength);
   state.axesHelper.visible = state.axesVisible;
   scene.add(state.axesHelper);
-}
-
-function toggleAxes() {
-  if (!splatMesh) {
-    console.warn("No model loaded");
-    return;
-  }
-
-  state.axesVisible = !state.axesVisible;
-
-  if (!state.axesHelper) {
-    createOrUpdateAxes();
-  } else {
-    state.axesHelper.visible = state.axesVisible;
-  }
-
-  // Update instructions to show state
-  const stateText = state.axesVisible ? "shown" : "hidden";
-  console.log(`Axes ${stateText}`);
 }
 
 // File input handler
