@@ -394,9 +394,6 @@ function rescaleModel(newDistance) {
   // Scale camera position and controls target
   camera.position.multiplyScalar(scaleFactor);
   controls.target.multiplyScalar(scaleFactor);
-  controls.minDistance *= scaleFactor;
-  controls.maxDistance *= scaleFactor;
-
   state.currentDistance = newDistance;
   updateDistanceDisplay(newDistance);
   guiParams.measuredDistance = newDistance.toFixed(4);
@@ -884,10 +881,7 @@ function centerCameraOnModel() {
     camera.lookAt(center);
     camera.updateProjectionMatrix();
 
-    // Update OrbitControls target and distance limits
     controls.target.copy(center);
-    controls.minDistance = maxDim * 0.0001;
-    controls.maxDistance = maxDim * 10;
     controls.update();
 
     // Update raycaster threshold based on model size
