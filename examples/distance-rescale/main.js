@@ -869,7 +869,7 @@ function centerCameraOnModel() {
 
     // Update OrbitControls target and distance limits
     controls.target.copy(center);
-    controls.minDistance = maxDim * 0.01;
+    controls.minDistance = maxDim * 0.0001;
     controls.maxDistance = maxDim * 10;
     controls.update();
 
