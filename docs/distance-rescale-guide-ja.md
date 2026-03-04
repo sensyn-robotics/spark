@@ -2,7 +2,7 @@
 
 ## アクセス方法
 
-**URL**: [https://nice-meadow-018297c00.6.azurestaticapps.net/examples/distance-rescale/](https://nice-meadow-018297c00.6.azurestaticapps.net/examples/distance-rescale/)
+**URL**: [https://nice-meadow-018297c00.eastasia.6.azurestaticapps.net/examples/distance-rescale/](https://nice-meadow-018297c00.eastasia.6.azurestaticapps.net/examples/distance-rescale/)
 
 ---
 
