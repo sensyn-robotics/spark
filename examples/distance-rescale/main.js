@@ -1,4 +1,4 @@
-import { PlyWriter, SparkRenderer, SplatMesh } from "@sparkjsdev/spark";
+import { PlyWriter, SparkRenderer, SplatMesh, utils } from "@sparkjsdev/spark";
 import { GUI } from "lil-gui";
 import * as THREE from "three";
 import { TrackballControls } from "three/addons/controls/TrackballControls.js";
@@ -261,9 +261,7 @@ function selectPoint2(hitPoint) {
 
   state.mode = "complete";
   calculateDistance();
-  updateInstructions(
-    "Drag markers to adjust | Right double-click to set origin",
-  );
+  updateInstructions("Drag markers to adjust | Right double-click to recenter");
 }
 
 // ============================================================================
@@ -363,14 +361,29 @@ function rescaleModel(newDistance) {
 
   const scaleFactor = newDistance / state.currentDistance;
 
-  // Scale all splat centers and scales
-  splatMesh.packedSplats.forEachSplat(
-    (i, center, scales, quat, opacity, color) => {
-      center.multiplyScalar(scaleFactor);
-      scales.multiplyScalar(scaleFactor);
-      splatMesh.packedSplats.setSplat(i, center, scales, quat, opacity, color);
-    },
-  );
+  // Scale centers and scales directly in the packed array to avoid
+  // re-encoding other fields with wrong encoding parameters.
+  const packedArray = splatMesh.packedSplats.packedArray;
+  const numSplats = splatMesh.packedSplats.numSplats;
+  const encoding = splatMesh.packedSplats.splatEncoding;
+  for (let i = 0; i < numSplats; i++) {
+    const i4 = i * 4;
+    const cx = utils.fromHalf(packedArray[i4 + 1] & 0xffff) * scaleFactor;
+    const cy =
+      utils.fromHalf((packedArray[i4 + 1] >>> 16) & 0xffff) * scaleFactor;
+    const cz = utils.fromHalf(packedArray[i4 + 2] & 0xffff) * scaleFactor;
+    utils.setPackedSplatCenter(packedArray, i, cx, cy, cz);
+
+    const { scales } = utils.unpackSplat(packedArray, i, encoding);
+    utils.setPackedSplatScales(
+      packedArray,
+      i,
+      scales.x * scaleFactor,
+      scales.y * scaleFactor,
+      scales.z * scaleFactor,
+      encoding,
+    );
+  }
 
   splatMesh.packedSplats.needsUpdate = true;
 
@@ -400,38 +413,13 @@ function rescaleModel(newDistance) {
 }
 
 // ============================================================================
-// Coordinate Origin Transform
+// Recenter (set rotation pivot + zoom to point)
 // ============================================================================
 
-function transformOriginTo(newOrigin) {
-  if (!splatMesh) return;
-
-  // Calculate translation: move newOrigin to (0,0,0)
-  const translation = newOrigin.clone().negate();
-
-  // Transform all splat centers
-  splatMesh.packedSplats.forEachSplat(
-    (i, center, scales, quat, opacity, color) => {
-      center.add(translation);
-      splatMesh.packedSplats.setSplat(i, center, scales, quat, opacity, color);
-    },
-  );
-  splatMesh.packedSplats.needsUpdate = true;
-
-  // Axes helper stays at (0,0,0) to mark the new origin
-  // No need to move it - it already represents world origin
-
-  // Reset measurements (user preference)
-  resetSelection();
-
-  // Transform camera and controls target to maintain view
-  camera.position.add(translation);
-  controls.target.add(translation);
+function recenterTo(point) {
+  // Set the controls target (rotation pivot) to the clicked point
+  controls.target.copy(point);
   controls.update();
-
-  updateInstructions(
-    "Origin set! Left-click to measure | Right double-click for new origin",
-  );
 }
 
 // ============================================================================
@@ -483,7 +471,7 @@ function resetSelection() {
   document.getElementById("distance-display").style.display = "none";
   guiParams.measuredDistance = "0.0000";
   updateInstructions(
-    "Left-click to measure distance | Right double-click to set origin",
+    "Left-click to measure distance | Right double-click to recenter",
   );
 }
 
@@ -660,7 +648,6 @@ renderer.domElement.addEventListener(
       if (timeSinceLastClick < RIGHT_DOUBLE_CLICK_DELAY && distance < 10) {
         // Right double-click detected!
         event.preventDefault();
-        event.stopPropagation();
 
         if (!splatMesh) {
           console.warn("No model loaded");
@@ -677,7 +664,8 @@ renderer.domElement.addEventListener(
           return;
         }
 
-        transformOriginTo(hitPoint);
+        recenterTo(hitPoint);
+
         lastRightClickTime = 0;
         lastRightClickPos = null;
         rightPointerDownPos = null;
@@ -825,7 +813,7 @@ async function loadSplatFile(urlOrFile) {
     if (state.axesVisible) createOrUpdateAxes();
 
     updateInstructions(
-      "Left-click to measure distance | Right double-click to set origin",
+      "Left-click to measure distance | Right double-click to recenter",
     );
   } catch (error) {
     console.error("Error loading splat:", error);
