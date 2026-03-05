@@ -1,4 +1,10 @@
-import { PlyWriter, SparkRenderer, SplatMesh, utils } from "@sparkjsdev/spark";
+import {
+  PackedSplats,
+  PlyWriter,
+  SparkRenderer,
+  SplatMesh,
+  utils,
+} from "@sparkjsdev/spark";
 import { GUI } from "lil-gui";
 import * as THREE from "three";
 import { TrackballControls } from "three/addons/controls/TrackballControls.js";
@@ -73,6 +79,12 @@ const state = {
 };
 
 let splatMesh = null;
+
+const MAX_DISPLAY_SPLATS = 5_000_000;
+let originalPackedArray = null; // Uint32Array clone of full loaded data
+let originalNumSplats = 0; // Total splats in original file
+let originalSplatEncoding = null; // Encoding params from original
+
 const raycaster = new THREE.Raycaster();
 raycaster.params.Points.threshold = 0.1;
 
@@ -387,6 +399,35 @@ function rescaleModel(newDistance) {
 
   splatMesh.packedSplats.needsUpdate = true;
 
+  // Also rescale original data so re-sampling and export reflect the rescale
+  if (originalPackedArray && originalNumSplats > 0) {
+    for (let i = 0; i < originalNumSplats; i++) {
+      const i4 = i * 4;
+      const cx =
+        utils.fromHalf(originalPackedArray[i4 + 1] & 0xffff) * scaleFactor;
+      const cy =
+        utils.fromHalf((originalPackedArray[i4 + 1] >>> 16) & 0xffff) *
+        scaleFactor;
+      const cz =
+        utils.fromHalf(originalPackedArray[i4 + 2] & 0xffff) * scaleFactor;
+      utils.setPackedSplatCenter(originalPackedArray, i, cx, cy, cz);
+
+      const { scales: origScales } = utils.unpackSplat(
+        originalPackedArray,
+        i,
+        originalSplatEncoding,
+      );
+      utils.setPackedSplatScales(
+        originalPackedArray,
+        i,
+        origScales.x * scaleFactor,
+        origScales.y * scaleFactor,
+        origScales.z * scaleFactor,
+        originalSplatEncoding,
+      );
+    }
+  }
+
   // Update points and markers
   if (state.point1) {
     state.point1.multiplyScalar(scaleFactor);
@@ -485,8 +526,19 @@ function exportPly() {
     return;
   }
 
-  const writer = new PlyWriter(splatMesh.packedSplats);
-  writer.downloadAs("rescaled_model.ply");
+  // Export full original data if available
+  if (originalPackedArray && originalNumSplats > 0) {
+    const fullPacked = new PackedSplats({ maxSplats: originalNumSplats });
+    const aligned = fullPacked.ensureSplats(originalNumSplats);
+    aligned.set(originalPackedArray);
+    fullPacked.numSplats = originalNumSplats;
+    fullPacked.splatEncoding = originalSplatEncoding;
+    const writer = new PlyWriter(fullPacked);
+    writer.downloadAs("rescaled_model.ply");
+  } else {
+    const writer = new PlyWriter(splatMesh.packedSplats);
+    writer.downloadAs("rescaled_model.ply");
+  }
 }
 
 // ============================================================================
@@ -724,6 +776,64 @@ renderer.domElement.addEventListener("dragleave", onDragLeave);
 renderer.domElement.addEventListener("drop", onDrop);
 
 // ============================================================================
+// Sampling
+// ============================================================================
+
+async function applySampling(ratePercent) {
+  if (!originalPackedArray || originalNumSplats === 0) {
+    console.warn("No original data to sample from");
+    return;
+  }
+
+  const rate = Math.max(0, Math.min(100, ratePercent)) / 100;
+  let targetCount = Math.min(
+    Math.round(originalNumSplats * rate),
+    MAX_DISPLAY_SPLATS,
+  );
+  targetCount = Math.max(1, targetCount);
+
+  // Update GUI to reflect effective rate
+  const effectiveRate = (targetCount / originalNumSplats) * 100;
+  guiParams.samplingRate = effectiveRate;
+
+  console.log(
+    `Sampling: ${targetCount} / ${originalNumSplats} splats (${effectiveRate.toFixed(1)}%)`,
+  );
+
+  // Stride sampling: each splat = 4 Uint32 values
+  const stride = originalNumSplats / targetCount;
+  const sampledArray = new Uint32Array(targetCount * 4);
+  for (let i = 0; i < targetCount; i++) {
+    const srcIdx = Math.floor(i * stride);
+    const srcOff = srcIdx * 4;
+    const dstOff = i * 4;
+    sampledArray[dstOff] = originalPackedArray[srcOff];
+    sampledArray[dstOff + 1] = originalPackedArray[srcOff + 1];
+    sampledArray[dstOff + 2] = originalPackedArray[srcOff + 2];
+    sampledArray[dstOff + 3] = originalPackedArray[srcOff + 3];
+  }
+
+  // Create new PackedSplats with sampled data
+  const packedSplats = new PackedSplats({ maxSplats: targetCount });
+  const aligned = packedSplats.ensureSplats(targetCount);
+  aligned.set(sampledArray);
+  packedSplats.numSplats = targetCount;
+  packedSplats.splatEncoding = originalSplatEncoding;
+
+  // Replace displayed mesh
+  if (splatMesh) {
+    scene.remove(splatMesh);
+  }
+  splatMesh = new SplatMesh({ packedSplats });
+  scene.add(splatMesh);
+  await splatMesh.initialized;
+
+  updateInstructions(
+    `Displaying ${targetCount.toLocaleString()} / ${originalNumSplats.toLocaleString()} splats`,
+  );
+}
+
+// ============================================================================
 // GUI
 // ============================================================================
 
@@ -735,6 +845,8 @@ const guiParams = {
     // Trigger file input click
     document.getElementById("file-input").click();
   },
+  samplingRate: 100,
+  applySample: () => applySampling(guiParams.samplingRate),
   showAxes: false,
   axesLength: 1,
   reset: resetSelection,
@@ -744,6 +856,8 @@ const guiParams = {
 
 // Add load button at the top
 gui.add(guiParams, "loadPlyFile").name("Load PLY File");
+gui.add(guiParams, "samplingRate", 0, 100).name("Sampling Rate (%)").listen();
+gui.add(guiParams, "applySample").name("Apply Sample");
 gui
   .add(guiParams, "showAxes")
   .name("Show Axes")
@@ -778,11 +892,14 @@ gui.add(guiParams, "exportPly").name("Export PLY");
 // ============================================================================
 
 async function loadSplatFile(urlOrFile) {
-  // Remove existing splat mesh
+  // Remove existing splat mesh and clear originals
   if (splatMesh) {
     scene.remove(splatMesh);
     splatMesh = null;
   }
+  originalPackedArray = null;
+  originalNumSplats = 0;
+  originalSplatEncoding = null;
 
   resetSelection();
   updateInstructions("Loading model...");
@@ -804,10 +921,27 @@ async function loadSplatFile(urlOrFile) {
     scene.add(splatMesh);
 
     await splatMesh.initialized;
-    console.log(`Loaded ${splatMesh.packedSplats.numSplats} splats`);
+    const numSplats = splatMesh.packedSplats.numSplats;
+    console.log(`Loaded ${numSplats} splats`);
 
-    // Auto-center camera on the model
+    // Store original data for sampling and export
+    const packedArray = splatMesh.packedSplats.packedArray;
+    originalPackedArray = new Uint32Array(
+      packedArray.buffer.slice(0, numSplats * 16),
+    );
+    originalNumSplats = numSplats;
+    originalSplatEncoding = splatMesh.packedSplats.splatEncoding;
+
+    // Auto-center camera on the model (before sampling so we use full data)
     centerCameraOnModel();
+
+    // Auto-sample if too many splats
+    if (numSplats > MAX_DISPLAY_SPLATS) {
+      const autoRate = (MAX_DISPLAY_SPLATS / numSplats) * 100;
+      await applySampling(autoRate);
+    } else {
+      guiParams.samplingRate = 100;
+    }
 
     // Update axes if visible
     if (state.axesVisible) createOrUpdateAxes();
