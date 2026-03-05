@@ -786,18 +786,13 @@ async function applySampling(ratePercent) {
   }
 
   const rate = Math.max(0, Math.min(100, ratePercent)) / 100;
-  let targetCount = Math.min(
-    Math.round(originalNumSplats * rate),
-    MAX_DISPLAY_SPLATS,
-  );
-  targetCount = Math.max(1, targetCount);
+  const targetCount = Math.max(1, Math.round(originalNumSplats * rate));
 
   // Update GUI to reflect effective rate
-  const effectiveRate = (targetCount / originalNumSplats) * 100;
-  guiParams.samplingRate = effectiveRate;
+  guiParams.samplingRate = (targetCount / originalNumSplats) * 100;
 
   console.log(
-    `Sampling: ${targetCount} / ${originalNumSplats} splats (${effectiveRate.toFixed(1)}%)`,
+    `Sampling: ${targetCount} / ${originalNumSplats} splats (${guiParams.samplingRate.toFixed(1)}%)`,
   );
 
   // Stride sampling: each splat = 4 Uint32 values
@@ -847,6 +842,7 @@ const guiParams = {
   },
   samplingRate: 100,
   applySample: () => applySampling(guiParams.samplingRate),
+  inertia: true,
   showAxes: false,
   axesLength: 1,
   reset: resetSelection,
@@ -858,6 +854,12 @@ const guiParams = {
 gui.add(guiParams, "loadPlyFile").name("Load PLY File");
 gui.add(guiParams, "samplingRate", 0, 100).name("Sampling Rate (%)").listen();
 gui.add(guiParams, "applySample").name("Apply Sample");
+gui
+  .add(guiParams, "inertia")
+  .name("Motion Inertia")
+  .onChange((val) => {
+    controls.staticMoving = !val;
+  });
 gui
   .add(guiParams, "showAxes")
   .name("Show Axes")
